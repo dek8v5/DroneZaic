@@ -31,7 +31,7 @@ import time
 
 
 
-def detect_cam_movement_video(video, save_path, scale, i, fps, win_size):
+def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
 
     translation_threshold = 5
     quiver_path = os.path.join(save_path, 'quiver')
@@ -53,6 +53,18 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size):
 
     current_fps = fps
 
+
+    
+    default_interval = int(video.get(cv2.CAP_PROP_FPS) * current_fps)
+    current_interval = default_interval
+    if ss==0:
+       frame_index = default_interval
+    else:
+       frame_index = ss*30
+
+    ret = video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+
+
     #read the first frame
     ret, init_frame = video.read()
 
@@ -70,11 +82,6 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size):
 
 
     prev_gray = cv2.resize(prev_gray, (new_width, new_height))
-
-    default_interval = int(video.get(cv2.CAP_PROP_FPS) * current_fps)
-    current_interval = default_interval
-    frame_index = default_interval
-
 
     j = 0
     non_translation_index = 0
@@ -254,7 +261,7 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size):
             print('overlap is lower:  %f' % (overlap*100))
             print('current time increasing the sampling rate')
             #go back to half second
-            current_interval = np.floor(current_interval/2)
+            current_interval = np.ceil(current_interval/2)
             if (current_interval) > 1:
                 frame_index = frame_index - current_interval
             else:
@@ -546,9 +553,10 @@ if __name__ == '__main__':
     parser.add_argument('-save_path', type=str,  dest='save_path', default="RESULTS/global_"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),  help="path to save result")
     parser.add_argument('-hm', type=str, help='txt file that stores homography matrices')
     parser.add_argument('-scale', type=int, dest='scale', default=1, help='the downsampled scale for the frame')
-    parser.add_argument('-fps', type=float, dest='fps', default=1, help='the downsampled scale for the frame')
-    parser.add_argument('-win', type=int, dest='win_size', default=10, help='the downsampled scale for the frame')
+    parser.add_argument('-fps', type=float, dest='fps', default=0.5, help='the downsampled scale for the frame')
+    parser.add_argument('-win', type=int, dest='win_size', default=50, help='the downsampled scale for the frame')
     parser.add_argument('-start_number', type=int, dest='start_number', default=1, help='initial number to save the frame id')
+    parser.add_argument('-ss', type=int, default=0, help='where do you want the start time to extract')
     parser.add_argument('-fname', type=str, help="desired prefix name for frame extracted")
 
     args = parser.parse_args()
@@ -557,4 +565,4 @@ if __name__ == '__main__':
     #detect_camera_movement(args.image_path, args.save_path, args.scale)
 
 
-    detect_cam_movement_video(args.video, args.save_path, args.scale, args.start_number, args.fps, args.win_size)
+    detect_cam_movement_video(args.video, args.save_path, args.scale, args.start_number, args.fps, args.win_size, args.ss)

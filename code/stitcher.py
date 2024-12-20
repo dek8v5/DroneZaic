@@ -14,6 +14,16 @@ import copy
 np.set_printoptions(threshold=sys.maxsize)
 
 
+
+
+def display_mosaic(fname, img):
+    max_size = 300000
+    scale = np.sqrt(min(1.0, float(max_size) / (img.shape[0] * img.shape[1])))
+    shape = (int(scale * img.shape[1]), int(scale * img.shape[0]))
+    img = cv2.resize(img, shape)
+    cv2.imshow('test test', np.uint8(img))
+    cv2.waitKey(100) 
+
 start = time.time()
 if __name__ == '__main__':
 
@@ -26,7 +36,7 @@ if __name__ == '__main__':
     parser.add_argument('-hm', '--homography', type=str, help='txt or csv file that stores homography matrices')
     parser.add_argument('-fname', '--fname', dest='fname', default='global_mosaic_'+datetime.now().strftime('%Y-%m-%d_%H-%M-%S'), help='desired filename for the global mosaic')
     parser.add_argument('-video', '--videos', dest = 'video', type=str, default= 'N', help='do you want to save frames addition process for videos?')
-    parser.add_argument('-scale', '--scale', dest='scale', default=1, type=int, help='image size scale')
+    parser.add_argument('-scale', '--scale', dest='scale', default=1, type=float, help='image size scale')
     parser.add_argument('-mini_mosaic', '--mini_mosaic', dest='mini_mosaic', action='store_true', help='enable mini mosaic')
     
 
@@ -314,10 +324,8 @@ if __name__ == '__main__':
         
         
         #display every new frame is added
-        cv2.namedWindow('Global Mosaic', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Global Mosaic', col // 3, row // 3)
-        cv2.imshow('mosaic_global2', global_mosaic)
-        cv2.waitKey(200)
+        display_mosaic('mosaic_global_process', global_mosaic)
+        
 
 
         if args.video == 'Y':
@@ -350,4 +358,5 @@ if __name__ == '__main__':
     end = time.time()
 
     print("time elapsed: "+  str(end-start)+  " seconds")
+
 

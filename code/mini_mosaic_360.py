@@ -29,6 +29,56 @@ import time
 import csv
 
 
+
+def mosaicking(img0, img1, counter, h_all, H_tp):
+    print("adding new frame test")
+    h_all = inv(h_all)
+    points0 = np.array(
+        [[0, 0], [0, img0.shape[0]], [img0.shape[1], img0.shape[0]], [img0.shape[1], 0]], dtype=np.float32)
+    points0 = points0.reshape((-1, 1, 2))
+    points1 = np.array(
+        [[0, 0], [0, img1.shape[0]], [img1.shape[1], img1.shape[0]], [img1.shape[1], 0]], dtype=np.float32)
+
+    points1 = points1.reshape((-1, 1, 2))
+
+    # get the transformed corner from new image
+    points2 = cv2.perspectiveTransform(points0, h_all)
+
+    print(points2)
+    # get the max and min coordinate of mosaic images
+    points = np.concatenate((points1, points2), axis=0)
+    [x_min, y_min] = np.int32(points.min(axis=0).ravel() - 0.5)
+    [x_max, y_max] = np.int32(points.max(axis=0).ravel() + 0.5)
+
+
+    # additional translation from offset
+    H_translation = np.array([[1, 0, -x_min], [0, 1, -y_min], [0, 0, 1]])
+    
+    #for homography in range(h_all):
+
+    output_img = np.zeros(( y_max - y_min,x_max - x_min,3)) #define new global canvas
+    output_img[-y_min:img1.shape[0] - y_min, -x_min:img1.shape[1] - x_min] = img1    # put old image in the bottom part
+
+    warped_img = cv2.warpPerspective(img0, H_translation.dot(h_all),(x_max - x_min, y_max - y_min)) #apply homography to new image
+    mask2 = (warped_img>0)*255
+    mask3 = cv2.erode(mask2.astype('uint8'), np.ones((10,10), np.uint8))
+    #mask3 = cv2.erode(mask2, numpy.ones((10,10), numpy.uint8))
+
+
+    masked_mosaic = cv2.bitwise_and(np.uint8(output_img),  cv2.bitwise_not(np.uint8(mask3)))
+
+    warped_img2 = cv2.bitwise_and(np.uint8(warped_img), np.uint8(mask3))
+
+
+
+    output_img = cv2.bitwise_or(np.uint8(warped_img2),  np.uint8(masked_mosaic))
+
+
+    return output_img, H_translation
+
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-image_path', type=str, nargs='+', help="paths to one or more images or image directories")
@@ -55,7 +105,7 @@ if __name__ == '__main__':
     points_in = np.array([[0,0], [0,0],[0,0],[0,0]], dtype=np.float32)
     #points_in = points_in.reshape((-1, 1, 2))
     
-    
+    ''' 
     with open(homography, 'r') as csvFile:
 
         reader = csv.reader(csvFile, delimiter = ",")
@@ -66,7 +116,7 @@ if __name__ == '__main__':
     
 
     print(H)
-
+    '''
     H_tp = np.array([[0,0,0],[0,0,0],[0,0,0]])
     
 
@@ -109,7 +159,7 @@ if __name__ == '__main__':
 
         #image_color is new image
         #result is global mosaic
-        ''' 
+         
         h_time = time.time()
         H = my_asift(result_gry, image_gray)
         elapsed_time_h = time.time()-h_time
@@ -125,7 +175,7 @@ if __name__ == '__main__':
            twr = csv.writer(f2,  delimiter=",", escapechar = ",", quoting = csv.QUOTE_NONE)
            twr.writerow([elapsed_time_h])
          
-        '''
+        
         '''  
         H_curr = np.asarray(H[counter])
         print(H_curr)
@@ -147,58 +197,4 @@ if __name__ == '__main__':
     cv2.imwrite(save_path+"/final_global_mosaic_"+str(counter)+".png", result)
     
     print("DONE!")
-    
-    
-    
-def mosaicking(img0, img1, counter, h_all, H_tp):
-    print("adding new frame test")
-    h_all = inv(h_all)
-    points0 = numpy.array(
-        [[0, 0], [0, img0.shape[0]], [img0.shape[1], img0.shape[0]], [img0.shape[1], 0]], dtype=numpy.float32)
-    points0 = points0.reshape((-1, 1, 2))
-    points1 = numpy.array(
-        [[0, 0], [0, img1.shape[0]], [img1.shape[1], img1.shape[0]], [img1.shape[1], 0]], dtype=numpy.float32)
-
-    points1 = points1.reshape((-1, 1, 2))
-    
-    # get the transformed corner from new image
-    points2 = cv2.perspectiveTransform(points0, h_all)
-
-    print(points2)
-    # get the max and min coordinate of mosaic images
-    points = numpy.concatenate((points1, points2), axis=0)
-    [x_min, y_min] = numpy.int32(points.min(axis=0).ravel() - 0.5)
-    [x_max, y_max] = numpy.int32(points.max(axis=0).ravel() + 0.5)
-
-
-    # additional translation from offset
-    H_translation = numpy.array([[1, 0, -x_min], [0, 1, -y_min], [0, 0, 1]])
-    #if counter>0:
-    #   H_translation = H_translation.dot(H_tp)     
-
-
-    #for homography in range(h_all):
-    
-    output_img = numpy.zeros(( y_max - y_min,x_max - x_min,3)) #define new global canvas
-    output_img[-y_min:img1.shape[0] - y_min, -x_min:img1.shape[1] - x_min] = img1    # put old image in the bottom part
-
-    warped_img = cv2.warpPerspective(img0, H_translation.dot(h_all),(x_max - x_min, y_max - y_min)) #apply homography to new image
-    mask2 = (warped_img>0)*255
-    mask3 = cv2.erode(mask2.astype('uint8'), numpy.ones((10,10), numpy.uint8))
-    #mask3 = cv2.erode(mask2, numpy.ones((10,10), numpy.uint8))
-
-
-    masked_mosaic = cv2.bitwise_and(numpy.uint8(output_img),  cv2.bitwise_not(numpy.uint8(mask3)))
-
-    warped_img2 = cv2.bitwise_and(numpy.uint8(warped_img), numpy.uint8(mask3))
-   
-    #cv2.imshow('mask', masked_mosaic)
-    #cv2.waitKey(200)
-           
-        
-    output_img = cv2.bitwise_or(numpy.uint8(warped_img2),  numpy.uint8(masked_mosaic))
-
-
-    return output_img, H_translation
-        
-   
+       
