@@ -1,6 +1,6 @@
-# MaiZaic: End-to-End Pipeline for Mosaicking UAV-Captured Aerial Imagery
+# DroneZaic: End-to-End Pipeline for Mosaicking UAV-Captured Aerial Imagery
 
-MaiZaic is an advanced mosaicking algorithm designed to process freely flown aerial imagery captured by UAVs. 
+DroneZaic is an advanced mosaicking algorithm designed to process freely flown aerial imagery captured by UAVs. 
 
 ## 5 Novel Contributions
 
