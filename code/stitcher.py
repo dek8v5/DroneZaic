@@ -11,11 +11,104 @@ from numpy.linalg import inv
 import time
 import sys
 import copy
+import exifread
+from math import radians, cos, sin, sqrt, atan2
+from rasterio.transform import rowcol
+import rasterio
+from rasterio.transform import xy
+
 np.set_printoptions(threshold=sys.maxsize)
 
+def load_raster_transform(image_path):
+    if image_path.lower().endswith(('.tif', '.tiff')):
+        try:
+            with rasterio.open(image_path) as src:
+                transform = src.transform
+            return transform
+        except Exception as e:
+            print("Error loading transform for .tiff file: %s" % str(e))
+            return None
+    else:
+        print("Skipping transform loading for non-tiff file.")
+        return None
 
 
+def gps_to_pixel(gps_lat, gps_lon, transform):
+    row, col = rowcol(transform, gps_lon, gps_lat)
+    return (col, row)  
 
+def pixel_to_gps(pixel_x, pixel_y, transform):
+    lon, lat = xy(transform, pixel_y, pixel_x)
+    return lat, lon
+	
+def get_decimal_from_dms(dms, ref):
+    degrees = float(dms[0].num) / dms[0].den
+    minutes = float(dms[1].num) / dms[1].den
+    seconds = float(dms[2].num) / dms[2].den
+    dec = degrees + (minutes / 60.0) + (seconds / 3600.0)
+    if ref in ['S', 'W']:
+        dec = -dec
+    return dec
+
+def extract_gps_from_image(image_path):
+    gps = None
+    try:
+        with open(image_path, 'rb') as f:
+            tags = exifread.process_file(f, details=False)
+            if 'GPS GPSLatitude' in tags and 'GPS GPSLongitude' in tags:
+                lat = get_decimal_from_dms(tags['GPS GPSLatitude'].values, str(tags['GPS GPSLatitudeRef']))
+                lon = get_decimal_from_dms(tags['GPS GPSLongitude'].values, str(tags['GPS GPSLongitudeRef']))
+                gps = (lat, lon)
+    except Exception as e:
+        print("Error extracting GPS: %s" % str(e))
+    return gps
+
+def gps_error(gps1, gps2):
+    R = 6371000
+    lat1, lon1 = radians(gps1[0]), radians(gps1[1])
+    lat2, lon2 = radians(gps2[0]), radians(gps2[1])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c
+
+def apply_homography_to_gps(gps, H):
+    x, y = gps
+    pt = np.array([x, y, 1.0], dtype=np.float64)  
+    pt_proj = np.dot(H, pt)
+    pt_proj = np.asarray(pt_proj).flatten()  
+    pt_proj /= pt_proj[2] 
+    return (pt_proj[0], pt_proj[1])
+
+def save_mosaic_with_gps(global_mosaic, save_path, args, gps_projected=None, gps_actual=None, final_frame_path=None):
+    if gps_projected and gps_actual:
+        error_m = gps_error(gps_projected, gps_actual)
+        print("Projected GPS:", gps_projected)
+        print("Actual GPS:", gps_actual)
+        print("GPS Error (meters):", error_m)
+
+        proj_x, proj_y = int(gps_projected[0]), int(gps_projected[1])
+        cv2.circle(global_mosaic, (proj_x, proj_y), 10, (0, 255, 255), -1)
+
+        if gps_actual:
+            act_x, act_y = int(gps_actual[0]), int(gps_actual[1])
+            cv2.rectangle(global_mosaic, (act_x-10, act_y-10), (act_x+10, act_y+10), (0, 0, 255), 3)
+
+    out_path = os.path.join(save_path, datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + "_" + args.fname + ".png")
+    cv2.imwrite(out_path, global_mosaic)
+    print("Saved mosaic to:", out_path)
+
+    if final_frame_path and gps_projected:
+        with rasterio.open(final_frame_path) as src:
+            transform = src.transform
+            lat, lon = pixel_to_gps(gps_projected[0], gps_projected[1], transform)
+            print("Projected pixel coordinate corresponds to GPS:", (lat, lon))
+
+
+    
+
+	
 def display_mosaic(fname, img):
     max_size = 300000
     scale = np.sqrt(min(1.0, float(max_size) / (img.shape[0] * img.shape[1])))
@@ -24,9 +117,7 @@ def display_mosaic(fname, img):
     cv2.imshow('test test', np.uint8(img))
     cv2.waitKey(100) 
 
-start = time.time()
-if __name__ == '__main__':
-
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-image_path', type=str, nargs='+', help='paths to one or more frames')
     parser.add_argument('-start', '--start', dest='start', default = 0, type=int, help="start stitching at")
@@ -58,7 +149,7 @@ if __name__ == '__main__':
 
     result = None
     result_gry = None
-
+				
     '''
     #w = 3959
     #h = 2014
@@ -80,8 +171,7 @@ if __name__ == '__main__':
        h = 666
     '''
 
-    #w = np.round(3816/args.scale)#w=1275#
-    #h = np.round(2138/args.scale)#h=699#
+    
     stop = args.stop
     homography_matrix = args.homography
     image_paths = args.image_path
@@ -89,15 +179,37 @@ if __name__ == '__main__':
     counter = 0
 
 
-    all_img = sorted([f for f in os.listdir(image_paths[0]) if f.endswith('.png')])
-    img = cv2.imread(os.path.join(image_paths[0], all_img[0]))
+    all_img = sorted([f for f in os.listdir(image_paths[0]) if f.endswith(('.png', '.jpg', '.jpeg', '.tif'))])
+    initial_img_path = os.path.join(image_paths[0], all_img[0])
+    img = cv2.imread(initial_img_path)
     h, w, _ = img.shape
+    w = int(np.round(w/args.scale))
+    h = int(np.round(h/args.scale))
+    img = cv2.resize(img, (w,h))
     print('Image dimensions (h, w):', h, w)
 		
     H_cum = [] 
     H=[]
     cor2 = []
-    
+
+
+
+
+
+    if initial_img_path.lower().endswith(('.tif', '.tiff')):
+       transform = load_raster_transform(initial_img_path)
+    else:
+       transform = None  # No transform for .jpg images
+
+    #transform = load_raster_transform(initial_img_path)
+    gps_initial = extract_gps_from_image(initial_img_path)
+    gps_projected = None
+    gps_actual = None
+    print(gps_initial)
+
+
+
+
     #pred_paths = []
     #pred_per_image = []
     #pred_square = []
@@ -208,7 +320,7 @@ if __name__ == '__main__':
             print('{0} path does not exists'.format(image_path))
             continue
         if os.path.isdir(image_path):
-            extensions = [".jpeg", ".jpg", ".png", "JPG"]
+            extensions = [".jpeg", ".jpg", ".png", ".JPG", ".tif", ".tiff"]
             #extensions = [".png"]
 
             for file_path in sorted(os.listdir(image_path), reverse=False):
@@ -297,7 +409,7 @@ if __name__ == '__main__':
             prediction_global[:,2] = np.round(pred_mosaic[:,0,1]+prediction_global[:,4]/2)           
             '''
             
-        elif image_index > -1:
+        else:
             wrapped = cv2.warpPerspective(image_rgb, np.dot(offset_matrix,(H_cum_new[image_index])), (row, col))
             
             #pred_mosaic.append(cv2.perspectiveTransform(np.array(square).reshape(-1,1,2)), np.dot(offset_matrix,(H_cum_new[image_index]))) for square in squares)
@@ -320,6 +432,26 @@ if __name__ == '__main__':
             
             prediction_global = np.concatenate((prediction_global, prediction_global_temp),axis=0)
             '''
+    
+        if gps_initial and image_index >= 0:
+            gps_projected = apply_homography_to_gps(gps_initial, np.dot(np.identity(3), H_cum_new[image_index]))
+            print("Projected GPS for image %d: %s" % (image_index, str(gps_projected)))
+
+            # Apply GPS to Pixel Projection only if transform exists (i.e., for .tiff files)
+            if transform is not None:
+                try:
+                    pixel_coords = gps_to_pixel(gps_projected[0], gps_projected[1], transform)
+                    print("Projected Pixel Coordinates for image %d: %s" % (image_index, str(pixel_coords)))
+                except Exception as e:
+                    print("Error in GPS to Pixel conversion: %s" % str(e))
+            else:
+                print("Skipping GPS to Pixel conversion for this image as no transform is available.")
+        
+				
+
+        if image_index == stop - 1:
+            gps_actual = extract_gps_from_image(image_path)
+            print("Actual GPS from last image: %s" % str(gps_actual))						
         image_index += 1
         
         
@@ -350,13 +482,36 @@ if __name__ == '__main__':
         if image_index == stop-1:
             cv2.imwrite(save_path + "global_"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + ".png", global_mosaic)
             break
-        
+    '''
+    if gps_projected and gps_actual:
+        error_m = gps_error(gps_projected, gps_actual)
+        print("Projected GPS:", gps_projected)
+        print("Actual GPS:", gps_actual)
+        print("GPS Error (meters):", error_m)
+
+
+        #now lets draw the projected and the actual on global
+        proj_x, proj_y = int(gps_projected[0]), int(gps_projected[1])
+        cv2.circle(global_mosaic, (proj_x, proj_y), 10, (0, 255, 255), -1)
+
+
+        if gps_actual:
+            act_x, act_y = int(gps_actual[0]), int(gps_actual[1])
+            cv2.rectangle(global_mosaic, (act_x-10, act_y-10), (act_x+10, act_y+10), (0, 0, 255), 3)
+    '''
+
+    save_mosaic_with_gps(global_mosaic, args.save_path, args, gps_projected, gps_actual, image_path)
+
     print(save_path)
     #cv2.imwrite(save_path, global_mosaic)
     cv2.imwrite(os.path.join(save_path, datetime.now().strftime('%Y-%m-%d_%H-%M-%S')+"_" + args.fname + ".png"), global_mosaic)
     #cv2.imwrite("result/corn_174_3fps_358/result_corn_174_all{:d}.png".format(image_index), (global_mosaic))
-    end = time.time()
-
-    print("time elapsed: "+  str(end-start)+  " seconds")
+    
 
 
+if __name__ == '__main__':
+
+    start_time = datetime.now()
+    main()
+    elapsed = (datetime.now() - start_time).total_seconds()
+    print('mosaicking time elapsed: ', elapsed)

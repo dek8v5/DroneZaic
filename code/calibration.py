@@ -24,7 +24,7 @@ parser.add_argument('-zzz', '--zzz', dest='zzz', default = 0, type=float,  help=
 args = parser.parse_args()
 
 paths = args.image_path + '/*.png'
-calibrated_paths = args.save_path + '/calibrated/'
+calibrated_paths = args.save_path  # + '/calibrated/'
 #homography_matrix_path = args.image_path + '/homography_matrix/'
 
 images = sorted(glob.glob(paths))
@@ -154,8 +154,8 @@ corners_4 = np.array([[1,1], [w,1],[1,h],[w,h]], dtype=np.float32)
 
 
 # 23.20.10 calibration grace automate python 
-#mtx = np.array([[ 7003.06025,  0.00000000,  1726.14480], [ 0.00000000,  7049.87304, -97.2162886], [ 0.00000000,  0.00000000,  1.00000000]])
-#dist = np.array([[ 0.06693996, -0.15926691, -0.01767889, -0.00425557,  0.34429158]])
+mtx = np.array([[ 7003.06025,  0.00000000,  1726.14480], [ 0.00000000,  7049.87304, -97.2162886], [ 0.00000000,  0.00000000,  1.00000000]])
+dist = np.array([[ 0.06693996, -0.15926691, -0.01767889, -0.00425557,  0.34429158]])
  
 
 '''
@@ -170,13 +170,14 @@ the output from the script:
 
 
 '''
-
+'''
+#theia calibration
 mtx = np.array([[2.69065481e+04, 0.00000000e+00, 2.74787941e+03],
        [0.00000000e+00, 2.68572137e+04, 1.57485262e+03],
        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
 dist = np.array([[-2.54857725e+00, -1.90431520e+02, -1.70987623e-03,
         -1.14733905e-02,  2.66256271e+04]])
-
+'''
 #upside data
 #mtx = np.array([[4.91398623e+04, 0.00000000e+00, 1.82741811e+03],[0.00000000e+00, 4.88346561e+04, 1.18160716e+03],[0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
 #dist = np.array([[-2.28909385e+00,  2.86751816e+03,  1.06471551e-02, 1.87582923e-02,  3.94093036e+00]])
@@ -245,13 +246,25 @@ for fname in images:
     dst = dst[y:y+h, x:x+w]
     
     #print(width, height)
-    #print(dst.shape)
-    dst2 = cv2.warpPerspective(dst, np.dot(offset_matrix,H1), (width, height))
+    print(dst.shape)
+    #dst2 = cv2.warpPerspective(dst, np.dot(offset_matrix,H1), (width, height))
  
-    dst3 = dst2[h1:h2 , w1:w2]
+    #dst3 = dst2[h1:h2 , w1:w2]
     
     #print(calibrated_paths+fname[len_fname:]) 
     cv2.imwrite(calibrated_paths+fname[len_fname:],dst)
     counter += 1
  
 cv2.destroyAllWindows()
+
+
+
+
+
+
+
+
+
+
+
+

@@ -9,6 +9,8 @@ call this by:
 - for video
 python dynamic_sampling.py -video /path/to/raw/video -save_path /path/to/where/you/want/to/save/the/quiver/plot
 
+example:
+python dynamic_sampling/dynamic_sampling.py -video /media/dek8v5/f/aerial_imaging/images/23r/grace/23.6/DJI_0205.MOV -save_path /home/dek8v5/Documents/cornetv2/data_ori/FINAL_CORNETV2_DATASET/1_gps_jpg_23r_06_23_205_seedling_parallel_1pass/jpeg -srt /media/dek8v5/f/aerial_imaging/images/23r/grace/23.6/DJI_0205.SRT -win 100 -scale 3 -fname 23r_06_23 -format jpg
 
 
 - for frames
@@ -28,11 +30,131 @@ matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import csv
 import time
+import re
+import piexif
+from PIL import Image
+import subprocess
+
+'''
+added the gps extraction function from the .srt file from the dji, this is formatted specifically for srt file from our drone:
+
+example of the srt format for our drone:
+
+107
+00:00:04,422 --> 00:00:04,463
+<font size="36">FrameCnt : 107, DiffTime : 41ms
+2023-06-23 11:26:03,972,307
+[iso : 100] [shutter : 1/3200.0] [fnum : 280] [ev : -0.7] [ct : 5502] [color_md : default] [focal_len : 280] [latitude : 38.904148] [longtitude : -92.281307] [altitude: 274.239014] </font>
+
+We identify the duration time and the lat long in that specific time. Then embeded that information in the frame extracted.
+
+
+kharismawati, 19.3.2025
+
+
+'''
+
+
+def parse_srt_file(srt_file):
+    timestamp_pattern = re.compile(r"(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2},\d{3})")
+    gps_pattern = re.compile(r"\[latitude\s*:\s*([-+]?[0-9]*\.?[0-9]+)\].*\[longtitude\s*:\s*([-+]?[0-9]*\.?[0-9]+)\]")
+    
+    timestamps, gps_data = [], []
+    
+    with open(srt_file, "r") as file:
+        lines = file.readlines()
+    
+    current_timestamp = None
+    for line in lines:
+        timestamp_match = timestamp_pattern.search(line)
+        gps_match = gps_pattern.search(line)
+        
+        if timestamp_match:
+            current_timestamp = (timestamp_match.group(1), timestamp_match.group(2))  # Start and End timestamp
+        
+        if gps_match and current_timestamp:
+            latitude, longitude = float(gps_match.group(1)), float(gps_match.group(2))
+            timestamps.append(current_timestamp)
+            gps_data.append((latitude, longitude))
+    
+    print("Extracted timestamps:", timestamps)
+    print("Extracted GPS data:", gps_data)
+    return timestamps, gps_data
+
+def find_closest_gps(frame_time, timestamps, gps_data):
+    frame_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(frame_time.replace(',', '.').split(':'))))
+    
+    for i, (start_time, end_time) in enumerate(timestamps):
+        start_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(start_time.replace(',', '.').split(':'))))
+        end_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(end_time.replace(',', '.').split(':'))))
+        
+        if start_seconds <= frame_seconds <= end_seconds:
+            return gps_data[i]
+    
+    return (None, None)
+
+def convert_to_exif_format(value):
+    degrees = int(abs(value))
+    minutes = int((abs(value) - degrees) * 60)
+    seconds = round(((abs(value) - degrees) * 60 - minutes) * 60 * 10000)
+    return ((degrees, 1), (minutes, 1), (seconds, 10000))
 
 
 
-def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
+'''
+Okay, embeding metadata can only using PIL, we can't use opencv.
+Also, embeded exif data cannot be save on .png file, can tiff and jpg, so I chose tiff
 
+
+kharismawati, 19.3.2025
+
+'''
+
+def embed_gps_metadata(image_path, latitude, longitude):
+    if latitude is None or longitude is None:
+        print("Skipping GPS metadata embedding for {} (No GPS data available)".format(image_path))
+        return
+
+    lat_ref = "N" if latitude >= 0 else "S"
+    lon_ref = "E" if longitude >= 0 else "W"
+
+    command = [
+        "exiftool",
+        "-GPSLatitude={}".format(abs(latitude)),
+        "-GPSLatitudeRef={}".format(lat_ref),
+        "-GPSLongitude={}".format(abs(longitude)),
+        "-GPSLongitudeRef={}".format(lon_ref),
+        "-overwrite_original",
+        image_path
+    ]
+
+    #result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = process.communicate()
+    result_code = process.returncode
+
+    if result_code == 0:
+       print("Embedded GPS via exiftool into {}: Lat {}, Lon {}".format(image_path, latitude, longitude))
+    else:
+       print("Failed to embed GPS via exiftool into {}. Error: {}".format(image_path, stderr))
+
+		
+
+def save_frame_with_gps(frame, frame_path, frame_time_sec, timestamps, gps_data):
+    frame_time_formatted = datetime.utcfromtimestamp(frame_time_sec).strftime('%H:%M:%S,%f')[:-3]
+    latitude, longitude = find_closest_gps(frame_time_formatted, timestamps, gps_data)
+    
+    #frame_path = os.path.join(raw_path, 'frame_{:06d}.jpg'.format(i))
+    
+    cv2.imwrite(frame_path, frame)
+    embed_gps_metadata(frame_path, latitude, longitude)
+    print("Saved frame {} with embedded GPS (Lat {}, Lon {})".format(frame_path, latitude, longitude))
+    
+    return frame_path
+	
+	
+def detect_cam_movement_video(video, srt_file, save_path, scale, i, fps, win_size, ss, img_format):
     translation_threshold = 5
     quiver_path = os.path.join(save_path, 'quiver')
     distribution_path = os.path.join(save_path, 'distribution')
@@ -48,7 +170,17 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
 
     if not os.path.exists(raw_path):
         os.makedirs(raw_path)
-        
+
+
+    #srt file condition
+    if srt_file:
+        timestamps, gps_data = parse_srt_file(srt_file)
+    else:
+        timestamps, gps_data = [], []
+
+    print(timestamps)
+    print(gps_data)
+    
     video = cv2.VideoCapture(video)
 
     current_fps = fps
@@ -63,14 +195,31 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
        frame_index = ss*30
 
     ret = video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-
-
+		
     #read the first frame
     ret, init_frame = video.read()
 
-    #i = 0
+    frame_time_sec = video.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
+    		
+    flname = os.path.join(raw_path, args.fname+'_frame_%06d.%s' % (i, img_format))
+
+
     
-    cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), init_frame)
+
+    if ret:
+        if timestamps and gps_data:
+          save_frame_with_gps(init_frame, flname, frame_time_sec, timestamps, gps_data)
+          i += 1
+        else:
+          cv2.imwrite(flname, init_frame)
+          print("Saved frame {} without GPS metadata".format(flname))
+          i += 1
+    else:
+        print('the video is empty!')
+        return
+    		 
+    #cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), init_frame)
     #init_frame = init_frame.astype('uint8')
     prev_gray = cv2.cvtColor(init_frame, cv2.COLOR_BGR2GRAY)
     height, width = prev_gray.shape
@@ -104,11 +253,14 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
  
         ret, frame = video.read()
 
-        if not ret:
+        frame_time_sec = video.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
+        if not ret:# or frame_time_sec >= 34.0:
             print('end of video')
             break
-
-        frame_time_sec = video.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        flname = os.path.join(raw_path, args.fname+'_frame_%06d.%s' % (i, img_format))
+				
+        #frame_time_sec = video.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
 
         print('frame time in seconds right now: ', frame_time_sec)
 
@@ -181,13 +333,19 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
            frame_index = frame_index + current_interval
 
            print('it is not translation, current interval is %d' %  current_interval)
-
-
-           i += 1
            j = 0
-           print('saving frames to : ', os.path.join(raw_path, args.fname+'_frame_%06d.png' % i))
+           #print('saving frames to : ', os.path.join(raw_path, args.fname+'_frame_%06d.png' % i))
 
-           cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), frame)
+           #cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), frame)
+           if timestamps and gps_data:
+              save_frame_with_gps(frame, flname, frame_time_sec, timestamps, gps_data)
+              i += 1
+           else:
+              cv2.imwrite(flname, frame)
+              print("Saved frame {} without GPS metadata".format(flname))
+              i += 1
+              
+           #save_frame_with_gps(init_frame, raw_path, i, frame_time_sec, timestamps, gps_data)
            prev_gray = gray.copy()
 
                 
@@ -206,15 +364,24 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
 
         #overlap decision
         if 0.85 <= overlap <= 0.98:
-            i += 1
 
             print('this frame has %f overlap' % (overlap*100))
             
 
             #saving_frame
-            print('saving the  frame ', os.path.join(raw_path, args.fname+ '_frame_%06d.png' % i))
-            cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), frame)
+            #print('saving the  frame ', os.path.join(raw_path, args.fname+ '_frame_%06d.png' % i))
+            #cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), frame)
 
+            if timestamps and gps_data:
+              save_frame_with_gps(frame, flname, frame_time_sec, timestamps, gps_data)
+              i += 1
+            else:
+              cv2.imwrite(flname, frame)
+              print("Saved frame {} without GPS metadata".format(flname))
+              i += 1
+						
+            #save_frame_with_gps(frame, flname, frame_time_sec, timestamps, gps_data)
+						
             frame_index += default_interval
 
             prev_gray = gray.copy()
@@ -240,9 +407,19 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
                 j = 0
                 i += 1
 
-                print('saving frames to : ', os.path.join(raw_path, args.fname+'_frame_%06d.png' % i))
+                #print('saving frames to : ', os.path.join(raw_path, args.fname+'_frame_%06d.png' % i))
 
-                cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), frame)
+                #cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.jpg' % i), frame)
+
+                if timestamps and gps_data:
+                  save_frame_with_gps(frame, flname, frame_time_sec, timestamps, gps_data)
+                  i += 1
+                else:
+                  cv2.imwrite(flname, frame)
+                  print("Saved frame {} without GPS metadata".format(flname))
+                  i += 1
+
+                #save_frame_with_gps(frame, flname, frame_time_sec, timestamps, gps_data)
                 prev_gray = gray.copy()
 
                 
@@ -266,9 +443,19 @@ def detect_cam_movement_video(video, save_path, scale, i, fps, win_size, ss):
                 frame_index = frame_index - current_interval
             else:
                 print('uh oh, current frame is the adjecent of the previous frame')
-                print('saving frames to : ', os.path.join(raw_path, args.fname+'_frame_%06d.png' % i))
+                #print('saving frames to : ', os.path.join(raw_path, args.fname+'_frame_%06d.png' % i))
 
-                cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), frame)
+                #cv2.imwrite(os.path.join(raw_path, args.fname+'_frame_%06d.png' % i), frame)
+
+                if timestamps and gps_data:
+                   save_frame_with_gps(frame, flname, frame_time_sec, timestamps, gps_data)
+                   i += 1
+                else:
+                   cv2.imwrite(flname, frame)
+                   print("Saved frame {} without GPS metadata".format(flname))
+                   i += 1
+								
+                #save_frame_with_gps(frame, flname, frame_time_sec, timestamps, gps_data)
                 prev_gray = gray.copy()
 
                 mean_direction_in_degree = compute_direction_save_plots(flow_x, flow_y, flow,i, quiver_path, distribution_path, args.fname) 
@@ -549,6 +736,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     
     parser.add_argument('-image_path', type=str, help="paths to one or more images or image directories")
+    parser.add_argument('-srt', type=str, default= None, help="path to corresponding .srt metadata file.")
     parser.add_argument('-video', type=str, help="paths to one video")
     parser.add_argument('-save_path', type=str,  dest='save_path', default="RESULTS/global_"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),  help="path to save result")
     parser.add_argument('-hm', type=str, help='txt file that stores homography matrices')
@@ -556,13 +744,17 @@ if __name__ == '__main__':
     parser.add_argument('-fps', type=float, dest='fps', default=0.5, help='the downsampled scale for the frame')
     parser.add_argument('-win', type=int, dest='win_size', default=50, help='the downsampled scale for the frame')
     parser.add_argument('-start_number', type=int, dest='start_number', default=1, help='initial number to save the frame id')
+    #parser.add_argument('-time', type=int, dest='time_end', default=1, help='the end of time of extration')
     parser.add_argument('-ss', type=int, default=0, help='where do you want the start time to extract')
     parser.add_argument('-fname', type=str, help="desired prefix name for frame extracted")
-
+    parser.add_argument('-format', type=str, choices=['jpg', 'tif', 'png'], default='tif', help="image format to save frames (jpg, tif, or png).")
     args = parser.parse_args()
     #print(args.image_path)
 
     #detect_camera_movement(args.image_path, args.save_path, args.scale)
 
+    start_time = datetime.now()
+    detect_cam_movement_video(args.video, args.srt, args.save_path, args.scale, args.start_number, args.fps, args.win_size, args.ss, args.format)
+    elapsed = (datetime.now() - start_time).total_seconds()
 
-    detect_cam_movement_video(args.video, args.save_path, args.scale, args.start_number, args.fps, args.win_size, args.ss)
+    print('dynamic sampling time elapsed: ', elapsed)

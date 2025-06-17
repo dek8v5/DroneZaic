@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 np.set_printoptions(threshold=sys.maxsize)
 
 
-def move_images(image_path, save_path, homography, boundaries, overlap):
+def move_images(image_path, save_path, homography, boundaries, duplicate, overlap):
     image_files = []
     prev_images = []
     H = []
@@ -29,7 +29,7 @@ def move_images(image_path, save_path, homography, boundaries, overlap):
 
     for image_path in image_path:
        if os.path.isdir(image_path):
-         extensions = [".jpeg", ".jpg", ".png"]
+         extensions = [".jpeg", ".jpg", ".png", ".tif"]
          for file_path in sorted(os.listdir(image_path)):
             if os.path.splitext(file_path)[1].lower() in extensions:
                 image_files.append(os.path.join(image_path, file_path))
@@ -69,7 +69,13 @@ def move_images(image_path, save_path, homography, boundaries, overlap):
                 
          destination_path = os.path.join(subfolder, filename)
          #print(destination_path)
-         shutil.copy(image_files[i], destination_path)
+         #print(duplicate)
+         if not duplicate:
+             #print("test move")
+             shutil.move(image_files[i], destination_path)					 
+         else:
+             #print("test copy")
+             shutil.copy(image_files[i], destination_path)
          group_count += 1
          i = i+1
 
@@ -153,9 +159,10 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-image_path', type=str, nargs='+', help="paths to one or more images or image directories")
-    parser.add_argument("-save_path", dest='save_path', default="RESULTS/global_"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S'), type=str, help="path to save result")
+    parser.add_argument('-save_path', dest='save_path', default="RESULTS/global_"+datetime.now().strftime('%Y-%m-%d_%H-%M-%S'), type=str, help="path to save result")
     parser.add_argument('-hm', '--homography', type=str, help='txt file that stores homography matrices')
     parser.add_argument('-angle_csv', '--angle_csv', type=str, nargs='+', help='csv file that stores the angle difference csv')
+    parser.add_argument('-duplicate', dest='duplicate', action='store_true', help='Enable duplication. Default is disable.')
     args = parser.parse_args()
 
     save_path = args.save_path
@@ -168,7 +175,7 @@ if __name__ == '__main__':
     i = 0
     prev_end_number = 0
 
-
+    
     
     for angle_file in args.angle_csv:
         angle_diffs = []
@@ -186,7 +193,7 @@ if __name__ == '__main__':
 
         thresh = find_threshold(angle_diffs)
 
-        filtered_peaks, properties = find_peaks(angle_diffs, thresh, distance=10)
+        filtered_peaks, properties = find_peaks(angle_diffs, thresh, distance=5)
 
         #filtered_peaks = filter_on_shoulder(peaks, properties, angle_diffs, window_size)
         
@@ -223,9 +230,9 @@ if __name__ == '__main__':
 
     #this is for partition of 12.6 15 passes manual split
     #partition_boundary=[99,184,292,376,475,573,691,770]    
-    
-
+    #partition_boundary=[288,320,756]
+    #partition_boundary = [133,143,283]
     #grouping the group partition
-    move_images(args.image_path, save_path, args.homography, partition_boundary, overlap = 0)
+    move_images(args.image_path, save_path, args.homography, partition_boundary, args.duplicate, overlap=0)
         
 
