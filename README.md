@@ -128,7 +128,7 @@ If you use _DroneZaic_ or any part of this pipeline, please cite our work.
 @article{kharismawati2025dronezaic,
   author    = {Dewi Endah Kharismawati and Toni Kazic},
   title     = {\emph{DroneZaic}: a robust end-to-end pipeline for mosaicking freely flown aerial video of agricultural fields},
-  journal   = {The Plant Phenone Journal},
+  journal   = {The Plant Phenome Journal},
   doi       = {10.1002/ppj2.70033}
   year      = {2025}
 }
